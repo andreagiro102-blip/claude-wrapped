@@ -1,12 +1,24 @@
-"""Render the stats as one self-contained HTML file (inline CSS + SVG, no network)."""
+"""Render the stats as one self-contained HTML file (inline CSS, SVG and fonts, no network)."""
 from __future__ import annotations
 
+import base64
 import html
+import math
+import os
 import re
+from datetime import date, timedelta
 
 from .pricing import PRICES_UPDATED
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+WORDS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+         "Ten", "Eleven", "Twelve"]
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+FONTS = (  # (family, file, weight range) - latin subsets, SIL OFL 1.1 (see fonts/OFL.txt)
+    ("Fraunces", "Fraunces-600.woff2", "600"),
+    ("Inter", "Inter.woff2", "400 600"),
+    ("JetBrains Mono", "JetBrainsMono-500.woff2", "500"),
+)
 
 
 def esc(x) -> str:
@@ -22,7 +34,7 @@ def big(n: float) -> str:
 
 
 def usd(x: float) -> str:
-    return f"${x:,.0f}" if x >= 10 else f"${x:,.2f}"
+    return f"${x:,.0f}" if x >= 10 or x == 0 else f"${x:,.2f}"
 
 
 def model_name(m: str) -> str:
@@ -35,223 +47,367 @@ def day(d) -> str:
     return f"{d:%b} {d.day}, {d.year}"     # "%-d" is not portable (fails on Windows)
 
 
-def bars(values, labels, w=640, h=170, hot=None, fmt=None, every=1) -> str:
-    """Vertical bar chart. `hot` = index to highlight, `every` = label every Nth bar."""
+def short_day(d) -> str:
+    return f"{d:%b} {d.day}"
+
+
+def font_faces() -> str:
+    """@font-face rules with the fonts inlined, so the report never touches the network.
+    A missing font file just falls back to the system stack."""
+    out = []
+    for family, name, weight in FONTS:
+        try:
+            with open(os.path.join(FONT_DIR, name), "rb") as fh:
+                data = base64.b64encode(fh.read()).decode("ascii")
+        except OSError:
+            continue
+        out.append(f"@font-face{{font-family:'{family}';font-weight:{weight};font-style:normal;"
+                   f"font-display:swap;src:url(data:font/woff2;base64,{data}) format('woff2')}}")
+    return "\n".join(out)
+
+
+def nice_step(mx: float, lines: int = 4) -> float:
+    """Round grid step (1, 2, 2.5 or 5 x 10^k) giving about `lines` gridlines up to `mx`."""
+    raw = (mx or 1) / lines
+    mag = 10 ** math.floor(math.log10(raw))
+    return next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+
+
+def bars(values, labels, w=840, h=220, hot=None, fmt=None, every=1, grid=False) -> str:
+    """Vertical bar chart. `hot` = index to highlight, `every` = label every Nth bar,
+    `grid` = horizontal gridlines labelled with `fmt`."""
     if not values:
         return ""
-    top, bottom = 22, 22
+    fmt = fmt or (lambda v: f"{v:,.0f}")
+    top, bottom = 24, 24
+    left = 48 if grid else 0
     mx = max(values) or 1
-    bw = w / len(values)
+    if grid:
+        step = nice_step(mx)
+        mx = step * math.ceil(mx / step)
+    y = lambda v: top + (h - top - bottom) * (1 - v / mx)
+    bw = (w - left) / len(values)
     out = []
+    if grid:
+        k = 0
+        while k * step <= mx + 1e-9:
+            gy = y(k * step)
+            out.append(f'<line x1="{left}" x2="{w}" y1="{gy:.1f}" y2="{gy:.1f}" class="grid"/>'
+                       f'<text x="{left - 8}" y="{gy + 3.5:.1f}" class="ax" text-anchor="end">{esc(fmt(k * step))}</text>')
+            k += 1
+    else:
+        out.append(f'<line x1="0" x2="{w}" y1="{y(0):.1f}" y2="{y(0):.1f}" class="grid"/>')
     for i, v in enumerate(values):
-        bh = (h - top - bottom) * v / mx
-        x, y = i * bw + bw * 0.15, h - bottom - bh
-        cls = "bar hot" if i == hot else "bar"
+        x = left + i * bw
         if v:
-            out.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw * .7:.1f}" height="{max(bh, 1.5):.1f}" rx="2" class="{cls}"/>')
-        else:
-            out.append(f'<rect x="{x:.1f}" y="{h - bottom - 1.5:.1f}" width="{bw * .7:.1f}" height="1.5" class="off"/>')
-        if i == hot and fmt:
-            out.append(f'<text x="{x + bw * .35:.1f}" y="{y - 6:.1f}" class="val">{esc(fmt(v))}</text>')
+            cls = "bar hot" if i == hot else "bar"
+            out.append(f'<rect x="{x + bw * .16:.1f}" y="{y(v):.1f}" width="{bw * .68:.1f}" '
+                       f'height="{max(y(0) - y(v), 1.5):.1f}" rx="{min(4, bw * .2):.1f}" class="{cls}"/>')
+        if i == hot:
+            out.append(f'<text x="{x + bw / 2:.1f}" y="{y(v) - 7:.1f}" class="val">{esc(fmt(v))}</text>')
         if i % every == 0:
-            out.append(f'<text x="{x + bw * .35:.1f}" y="{h - 6}" class="ax">{esc(labels[i])}</text>')
+            out.append(f'<text x="{x + bw / 2:.1f}" y="{h - 6}" class="ax">{esc(labels[i])}</text>')
     return f'<svg viewBox="0 0 {w} {h}" class="chart" role="img">{"".join(out)}</svg>'
 
 
 def meter_rows(rows) -> str:
-    """rows: (label, value text, share 0-1)."""
-    return "".join(
-        f'<div class="row"><span class="lbl">{esc(lbl)}</span>'
-        f'<span class="track"><span class="fill" style="width:{max(share, .01) * 100:.1f}%"></span></span>'
-        f'<span class="num">{esc(val)}</span></div>' for lbl, val, share in rows)
+    """rows: (label, value text, share 0-1, optional secondary text)."""
+    out = []
+    for lbl, val, share, *extra in rows:
+        sec = f'<span class="mt">{esc(extra[0])}</span>' if extra and extra[0] else ""
+        out.append(f'<div class="mrow{" has-mt" if sec else ""}"><span class="mn">{esc(lbl)}</span>'
+                   f'<span class="mbar"><i style="width:{max(share, .015) * 100:.1f}%"></i></span>'
+                   f'<span class="mv">{esc(val)}</span>{sec}</div>')
+    return "".join(out)
+
+
+def mix_bar(t: dict) -> str:
+    """Token composition as one segmented bar plus legend."""
+    total = t["total"] or 1
+    parts = [("Cache read", t["cache_read"], "c1"), ("Cache write", t["cache_write"], "c2"),
+             ("Output", t["output"], "c3"), ("Input", t["input"], "c4")]
+    segs = "".join(f'<i class="{c}" style="width:{v / total * 100:.3f}%"></i>' for _, v, c in parts if v)
+    leg = "".join(f'<div class="li"><b class="{c}"></b><span>{lbl}</span>'
+                  f'<strong>{big(v)}</strong><em>{"&lt;0.1" if 0 < v / total < .001 else f"{v / total * 100:.1f}"}%</em></div>'
+                  for lbl, v, c in parts)
+    return f'<div class="mix">{segs}</div><div class="leg">{leg}</div>'
+
+
+def span_title(start, end) -> str:
+    """'Eleven months' / '23 days' - the cover headline."""
+    days = (end - start).days + 1
+    if days < 45:
+        return f"{WORDS[days] if days < len(WORDS) else days} day{'s' if days != 1 else ''}"
+    months = (end.year - start.year) * 12 + end.month - start.month + 1
+    return f"{WORDS[months] if months < len(WORDS) else months} months"
 
 
 def render(s: dict) -> str:
     p, t = s["period"], s["tokens"]
     priced = s["api_usd"] > 0
+    key = "usd" if priced else "tokens"
+    vfmt = usd if priced else big
 
     # timeline: daily bars for short periods, monthly otherwise
-    daily = s["daily"]
     if (p["end"] - p["start"]).days <= 62:
-        from datetime import timedelta
         span = [p["start"] + timedelta(i) for i in range((p["end"] - p["start"]).days + 1)]
-        by = {d["day"]: d for d in daily}
-        key = "usd" if priced else "tokens"
+        by = {d["day"]: d for d in s["daily"]}
         vals = [by.get(d, {}).get(key, 0) for d in span]
-        hot = span.index(s["busiest_day"]["day"])
-        timeline = bars(vals, [d.strftime("%d") for d in span], hot=hot,
-                        fmt=usd if priced else big, every=max(1, len(span) // 10))
+        labels, hot, every = [str(d.day) for d in span], span.index(s["busiest_day"]["day"]), max(1, len(span) // 12)
         timeline_title = "Day by day"
+        timeline_sub = "per day; the busiest one highlighted."
     else:
-        key = "usd" if priced else "tokens"
         vals = [m[key] for m in s["months"]]
-        timeline = bars(vals, [m["month"] for m in s["months"]], hot=vals.index(max(vals)),
-                        fmt=usd if priced else big)
+        labels = [f'{date(int(m["month"][:4]), int(m["month"][5:]), 1):%b}' for m in s["months"]]
+        hot, every = vals.index(max(vals)), 1
         timeline_title = "Month by month"
+        timeline_sub = "per month; the busiest one highlighted."
+
+    # two sizes of the same chart: SVG text scales with the viewBox, so a phone gets its own
+    timeline = (bars(vals, labels, hot=hot, fmt=vfmt, every=every, grid=True).replace('class="chart"', 'class="chart wide"')
+                + bars(vals, labels, w=420, h=200, hot=hot, fmt=vfmt, every=every * 2, grid=True)
+                .replace('class="chart"', 'class="chart narrow"'))
 
     peak_hour = max(range(24), key=lambda h: s["hours"][h])
-    hours_svg = bars(s["hours"], [f"{h:02d}" for h in range(24)], h=150, hot=peak_hour, every=3)
+    hours_svg = bars(s["hours"], [f"{h:02d}" for h in range(24)], w=480, h=170, hot=peak_hour, every=3)
     peak_wd = max(range(7), key=lambda i: s["weekdays"][i])
-    week_svg = bars(s["weekdays"], DAYS, w=360, h=150, hot=peak_wd)
+    week_svg = bars(s["weekdays"], [d[0] for d in DAYS], w=300, h=170, hot=peak_wd)
 
-    total_model = sum(m["usd"] if priced else m["tokens"] for m in s["models"]) or 1
+    total_model = sum(m[key] for m in s["models"]) or 1
     # an unpriced model shows its tokens, never "$0.00" (that would read as "free")
     models = meter_rows((model_name(m["model"]),
                          big(m["tokens"]) + " tok" if not priced or m["model"] in s["unpriced"] else usd(m["usd"]),
-                         (m["usd"] if priced else m["tokens"]) / total_model) for m in s["models"][:6])
-    top_p = s["projects"][0]["usd" if priced else "tokens"] if s["projects"] else 1
-    projects = meter_rows((x["name"], usd(x["usd"]) if priced else big(x["tokens"]),
-                           (x["usd"] if priced else x["tokens"]) / (top_p or 1)) for x in s["projects"])
+                         m[key] / total_model,
+                         f'{big(m["tokens"])} tok' if priced and m["model"] not in s["unpriced"] else "")
+                        for m in s["models"][:6])
+    top_p = s["projects"][0][key] if s["projects"] else 1
+    projects = meter_rows((x["name"], vfmt(x[key]), x[key] / (top_p or 1)) for x in s["projects"])
     top_t = s["tools"][0][1] if s["tools"] else 1
     tools = meter_rows((name, f"{n:,}", n / top_t) for name, n in s["tools"])
 
     arch = ""
     if s["archetype"]:
         title, why = s["archetype"]
-        arch = f'<section class="card arch"><p class="kicker">Your Claude Code personality</p><h2>{esc(title)}</h2><p>{esc(why)}</p></section>'
+        head, _, last = title.rpartition(" ")
+        name = f'{esc(head)} <em>{esc(last)}</em>' if head else f"<em>{esc(last)}</em>"
+        arch = (f'<section class="persona"><p class="kicker">Your Claude Code personality</p>'
+                f'<h2>{name}</h2><p class="sub">{esc(why[:1].upper() + why[1:])}.</p></section>')
 
-    ls = s["longest_session"]
-    longest = (f'<b>{ls["active_min"] / 60:.1f} h</b> of active work on <b>{esc(ls["project"])}</b>, {esc(day(ls["start"]))}'
-               if ls else "—")
-    bd = s["busiest_day"]
+    ls, bd = s["longest_session"], s["busiest_day"]
+    facts = [
+        (short_day(bd["day"]), f'busiest day: {big(bd["tokens"])} tokens'
+         + (f', {usd(bd["usd"])}' if priced else "")),
+        (f'{s["streak"]["days"]} day{"s" if s["streak"]["days"] != 1 else ""}', "longest streak in a row"),
+    ]
+    if ls:
+        facts.append((f'{ls["active_min"] / 60:.1f} h',
+                      f'longest session, on {ls["project"]} ({short_day(ls["start"])})'))
+    facts_html = "".join(f'<div class="stat"><div class="v">{esc(v)}</div><div class="l">{esc(l)}</div></div>'
+                         for v, l in facts)
+
     unpriced = ""
     if s["unpriced"]:
         names = ", ".join(sorted(s["unpriced"]))
-        unpriced = f'<p class="warn">No price known for: {esc(names)} — their tokens are counted, their cost is not. Pass <code>--prices</code> to add them.</p>'
+        unpriced = (f'<p class="warn">No price known for {esc(names)}: their tokens are counted, '
+                    f'their cost is not. Pass <code>--prices</code> to add them.</p>')
 
-    hero_money = (f'<div class="stat"><b>{usd(s["api_usd"])}</b><span>API-equivalent cost</span></div>'
-                  if priced else "")
-    cache_line = (f'Prompt caching served <b>{s["cache_hit_rate"]:.0%}</b> of the input and saved about <b>{usd(s["cache_saved_usd"])}</b>.'
-                  if priced else f'Prompt caching served <b>{s["cache_hit_rate"]:.0%}</b> of the input.')
+    tiles = [(f'{s["active_days"]:,}', "active days"),
+             (f'{s["prompts"]:,}', "prompts you typed"),
+             (f'{s["tool_calls"]:,}', "tool calls by Claude (files, shell, web…)"),
+             (f'{s["sessions"]:,}', "sessions"),
+             (f'{s["active_hours"]:,.0f} h', "of active work, pauses left out")]
+    tiles_html = "".join(f'<div class="tile"><div class="v">{v}</div><div class="l">{l}</div></div>'
+                         for v, l in tiles)
+    if priced:
+        tiles_html = (f'<div class="tile hl"><div class="v">{usd(s["api_usd"])}</div>'
+                      f'<div class="l">what this usage would cost at API list prices</div></div>') + tiles_html
+
+    cache_line = f'Prompt caching served <b>{s["cache_hit_rate"]:.0%}</b> of the input'
+    cache_line += (f' and saved about <b>{usd(s["cache_saved_usd"])}</b>.' if priced else ".")
+    cache_line += (" Every turn re-sends the whole conversation, and the server reads it back from"
+                   " the cache at a tenth of the price. That is why tokens run into the billions.")
 
     return TEMPLATE.format(
+        fonts=font_faces(),
         css=CSS,
-        period=f'{esc(day(p["start"]))} – {esc(day(p["end"]))}',
-        tokens=big(t["total"]),
-        hero_money=hero_money,
+        year=p["end"].year,
+        headline=span_title(p["start"], p["end"]),
+        period=f'{esc(short_day(p["start"]))} → {esc(day(p["end"]))}',
         active_days=s["active_days"],
-        prompts=f'{s["prompts"]:,}',
-        tool_calls=f'{s["tool_calls"]:,}',
         sessions=f'{s["sessions"]:,}',
-        hours=f'{s["active_hours"]:,.0f}',
+        tokens=big(t["total"]),
+        hit=f'{s["cache_hit_rate"]:.0%}',
+        tiles=tiles_html,
         arch=arch,
         timeline_title=timeline_title,
+        timeline_unit=("API-equivalent cost " if priced else "Tokens ") + timeline_sub,
         timeline=timeline,
-        busiest=f'Busiest day: <b>{esc(day(bd["day"]))}</b> — {big(bd["tokens"])} tokens'
-                + (f', {usd(bd["usd"])}' if priced else ""),
-        streak=s["streak"]["days"],
-        longest=longest,
+        facts=facts_html,
         hours_svg=hours_svg,
         peak_hour=f"{peak_hour:02d}:00",
         week_svg=week_svg,
         peak_day=DAYS[peak_wd],
-        t_in=big(t["input"]), t_out=big(t["output"]), t_cr=big(t["cache_read"]), t_cw=big(t["cache_write"]),
+        mix=mix_bar(t),
         cache_line=cache_line,
+        unpriced=unpriced,
+        model_count=len(s["models"]),
         models=models,
         projects=projects,
         project_count=s["project_count"],
         tools=tools,
-        unpriced=unpriced,
         prices_updated=PRICES_UPDATED,
     )
 
 
 CSS = """
-:root{--bg:#100e17;--card:#1a1724;--line:#2c2839;--ink:#f3eff8;--dim:#a69fb8;--a:#ff8a5c;--b:#b28cff}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:760px;margin:0 auto;padding:40px 16px 64px;display:grid;gap:18px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px}
-.hero{background:radial-gradient(120% 140% at 0% 0%,#3a1f4f 0%,#1a1724 55%),var(--card);padding:40px 26px}
-.kicker{margin:0;color:var(--dim);font-size:13px;letter-spacing:.12em;text-transform:uppercase}
-h1{margin:6px 0 2px;font-size:clamp(34px,7vw,54px);line-height:1.05;letter-spacing:-.02em}
-h2{margin:4px 0 14px;font-size:24px;letter-spacing:-.01em}
-.huge{font-size:clamp(64px,16vw,120px);font-weight:800;line-height:1;letter-spacing:-.04em;margin:26px 0 0;
-  background:linear-gradient(90deg,var(--a),var(--b));-webkit-background-clip:text;background-clip:text;color:transparent}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:24px}
-.stat{background:#0003;border-radius:14px;padding:14px}
-.stat b{display:block;font-size:26px;letter-spacing:-.02em}
-.stat span{color:var(--dim);font-size:13px}
-.arch{border-color:var(--a);background:linear-gradient(135deg,#3a2216,#1a1724 70%)}
-.arch h2{font-size:34px;margin-bottom:6px}
-.arch p:last-child{margin:0;color:var(--dim)}
-.two{display:grid;grid-template-columns:1.6fr 1fr;gap:18px}
-@media (max-width:640px){.two{grid-template-columns:1fr}}
-.chart{width:100%;height:auto;display:block;margin:6px 0 10px}
-.bar{fill:var(--b);opacity:.75}.bar.hot{fill:var(--a);opacity:1}.off{fill:var(--line)}
-.ax{fill:var(--dim);font-size:11px;text-anchor:middle}.val{fill:var(--ink);font-size:12px;font-weight:700;text-anchor:middle}
-.note{color:var(--dim);margin:0}.note b{color:var(--ink)}
-.row{display:grid;grid-template-columns:minmax(90px,1.1fr) 2fr auto;gap:12px;align-items:center;margin:9px 0}
-.lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.track{height:10px;border-radius:5px;background:#0005;overflow:hidden}
-.fill{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--b),var(--a))}
-.num{font-variant-numeric:tabular-nums;color:var(--dim);font-size:14px}
-.tok{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
-@media (max-width:520px){.tok{grid-template-columns:repeat(2,1fr)}}
-.warn{color:#ffb86b;font-size:14px}
-footer{color:var(--dim);font-size:13px;text-align:center;line-height:1.6}
-code{background:#0005;padding:1px 5px;border-radius:4px}
-@media print{body{background:#fff}.card{break-inside:avoid}}
+:root{--ink:#1d1b18;--mute:#6b665e;--line:#e8e4dc;--paper:#fdfcfa;--chip:#f2eee7;--acc:#c8603f;--acc-soft:#fbe3d8;
+--c1:#2f4858;--c2:#c8603f;--c3:#e9b44c;--c4:#8aa39b;
+--serif:Fraunces,Georgia,"Times New Roman",serif;--sans:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+--mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html{color-scheme:light}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+main{max-width:880px;margin:0 auto;padding:64px 24px 40px}
+section{padding:40px 0;border-top:1px solid var(--line)}
+h1,h2,.v{font-family:var(--serif);font-weight:600;letter-spacing:-.02em}
+h1 em,h2 em{font-style:normal;color:var(--acc)}
+.kicker{margin:0 0 12px;font:500 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--acc)}
+h2{font-size:30px;line-height:1.12;margin:0 0 6px}
+h3{font:600 13px/1.3 var(--sans);margin:0 0 10px}
+.sub{color:var(--mute);margin:0 0 22px;max-width:62ch}
+.sub b{color:var(--ink);font-weight:600}
+code{font:12.5px var(--mono);background:var(--chip);padding:1px 5px;border-radius:4px}
+/* cover */
+.cover{border-top:none;padding-top:0}
+h1{font-size:clamp(46px,9vw,76px);line-height:.95;margin:0 0 18px}
+.range{font:13px/1.5 var(--mono);color:var(--mute)}
+.hero{margin-top:56px}
+.hero .v{font-size:clamp(80px,17vw,132px);line-height:.9}
+.hero .l{color:var(--mute);margin-top:10px}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:44px}
+.tile{border:1px solid var(--line);border-radius:14px;padding:16px 18px 15px;background:#fff}
+.tile .v{font-size:32px;line-height:1.05}
+.tile .l{font-size:12.5px;line-height:1.4;color:var(--mute);margin-top:7px}
+.tile.hl{background:var(--acc);border-color:var(--acc);color:#fff}
+.tile.hl .l{color:var(--acc-soft)}
+/* personality */
+.persona h2{font-size:clamp(40px,7vw,58px);line-height:1;margin:2px 0 12px}
+.persona .sub{font-size:17px;margin:0}
+/* charts */
+.chart{display:block;width:100%;height:auto;margin:4px 0 0;overflow:visible}
+.chart .grid{stroke:var(--line)}
+.chart .ax{font:10px var(--mono);fill:var(--mute);text-anchor:middle}
+.chart .val{font:600 12px var(--sans);fill:var(--ink);text-anchor:middle}
+.chart .bar{fill:var(--c1)}
+.chart .bar.hot{fill:var(--acc)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:0 24px;margin-top:22px}
+.stat{border-top:1px solid var(--line);padding:12px 0 0}
+.stat .v{font-size:26px;line-height:1.1}
+.stat .l{font-size:12.5px;color:var(--mute);margin-top:3px}
+.two{display:grid;grid-template-columns:8fr 5fr;gap:48px}
+.two.even{grid-template-columns:1fr 1fr}
+.two>section{border-top:none;padding:0}
+.pair{border-top:1px solid var(--line);padding:40px 0}
+/* tokens */
+.mix{display:flex;height:24px;border-radius:7px;overflow:hidden;gap:2px;background:var(--paper)}
+.mix i{display:block;height:100%}
+.c1{background:var(--c1)}.c2{background:var(--c2)}.c3{background:var(--c3)}.c4{background:var(--c4)}
+.leg{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0 20px}
+.li{display:grid;grid-template-columns:auto 1fr;column-gap:8px;align-items:baseline}
+.li b{width:9px;height:9px;border-radius:2px;display:inline-block}
+.li span{font-size:12.5px;color:var(--mute)}
+.li strong{grid-column:2;font:600 22px/1.15 var(--serif);letter-spacing:-.02em}
+.li em{grid-column:2;font:11px var(--mono);font-style:normal;color:var(--mute)}
+.note{font-size:13.5px;color:var(--mute);margin:0;max-width:66ch}
+.note b{color:var(--ink);font-weight:600}
+.warn{font-size:13.5px;color:#8a4a1c;background:#fdf1e7;border-radius:8px;padding:10px 12px;margin:14px 0 0}
+/* meters */
+.mrow{display:grid;grid-template-columns:minmax(80px,140px) 1fr 64px;align-items:center;gap:12px;padding:6px 0;font-size:14px}
+.mrow.has-mt{grid-template-columns:minmax(80px,140px) 1fr 64px 64px}
+.mn{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mv{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.mt{text-align:right;font:11px var(--mono);color:var(--mute)}
+.mbar{height:8px;background:var(--chip);border-radius:99px;overflow:hidden}
+.mbar i{display:block;height:100%;background:var(--c1);border-radius:99px}
+.mrow:first-of-type .mbar i{background:var(--acc)}
+.chart.narrow{display:none}
+.two .mrow{grid-template-columns:minmax(70px,110px) 1fr 58px}
+/* footer */
+footer{border-top:1.5px solid var(--ink);padding-top:14px;display:flex;justify-content:space-between;gap:24px;
+font:11px/1.6 var(--mono);color:var(--mute)}
+footer p{margin:0;max-width:60ch}
+footer code{font-size:11px}
+@media (max-width:680px){
+  main{padding:40px 16px 32px}
+  .tiles{grid-template-columns:1fr 1fr}
+  .stats{grid-template-columns:1fr;gap:12px}
+  .two,.two.even{grid-template-columns:1fr;gap:40px}
+  .leg{grid-template-columns:1fr 1fr}
+  footer{flex-direction:column}
+  .chart.wide{display:none}.chart.narrow{display:block}
+  .mrow.has-mt{grid-template-columns:minmax(70px,110px) 1fr 58px}.mt{display:none}
+  .two .chart{max-width:420px}
+}
+@media print{main{padding-top:24px}section,.pair{break-inside:avoid}}
 """
 
 TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Claude Code Wrapped</title><style>{css}</style></head>
+<title>Claude Code Wrapped</title>
+<style>{fonts}
+{css}</style></head>
 <body><main>
 
-<section class="card hero">
-  <p class="kicker">{period}</p>
-  <h1>Your Claude Code Wrapped</h1>
-  <p class="huge">{tokens}</p>
-  <p class="note">tokens processed</p>
-  <div class="grid">
-    {hero_money}
-    <div class="stat"><b>{active_days}</b><span>active days</span></div>
-    <div class="stat"><b>{prompts}</b><span>prompts you typed</span></div>
-    <div class="stat"><b>{tool_calls}</b><span>tool calls by Claude</span></div>
-    <div class="stat"><b>{sessions}</b><span>sessions</span></div>
-    <div class="stat"><b>{hours}</b><span>hours of active work</span></div>
+<section class="cover">
+  <p class="kicker">Claude Code · Wrapped {year}</p>
+  <h1>{headline}<br>of <em>code</em>,<br>for four hands.</h1>
+  <div class="range">{period} · {active_days} active days · {sessions} sessions</div>
+  <div class="hero">
+    <div class="v">{tokens}</div>
+    <div class="l">tokens processed, {hit} of the input read from the cache</div>
   </div>
+  <div class="tiles">{tiles}</div>
 </section>
 
 {arch}
 
-<section class="card">
-  <p class="kicker">Rhythm</p><h2>{timeline_title}</h2>
+<section>
+  <p class="kicker">Rhythm</p>
+  <h2>{timeline_title}</h2>
+  <p class="sub">{timeline_unit}</p>
   {timeline}
-  <p class="note">{busiest}</p>
-  <p class="note">Longest streak: <b>{streak} days</b> in a row · Longest session: {longest}</p>
+  <div class="stats">{facts}</div>
 </section>
 
-<div class="two">
-  <section class="card"><p class="kicker">Clock</p><h2>Peak hour: {peak_hour}</h2>{hours_svg}</section>
-  <section class="card"><p class="kicker">Week</p><h2>Favourite day: {peak_day}</h2>{week_svg}</section>
+<div class="pair two">
+  <section><p class="kicker">Clock</p><h2>Peak hour {peak_hour}</h2><p class="sub">When you type your prompts.</p>{hours_svg}</section>
+  <section><p class="kicker">Week</p><h2>Mostly on {peak_day}</h2><p class="sub">Prompts by weekday.</p>{week_svg}</section>
 </div>
 
-<section class="card">
-  <p class="kicker">Under the hood</p><h2>Where the tokens went</h2>
-  <div class="tok">
-    <div class="stat"><b>{t_in}</b><span>input</span></div>
-    <div class="stat"><b>{t_out}</b><span>output</span></div>
-    <div class="stat"><b>{t_cr}</b><span>cache read</span></div>
-    <div class="stat"><b>{t_cw}</b><span>cache write</span></div>
-  </div>
+<section>
+  <p class="kicker">Under the hood</p>
+  <h2>Where the tokens went</h2>
+  {mix}
   <p class="note">{cache_line}</p>
   {unpriced}
 </section>
 
-<section class="card"><p class="kicker">Models</p><h2>Who you worked with</h2>{models}</section>
+<section>
+  <p class="kicker">Models · {model_count} used</p>
+  <h2>Who you worked with</h2>
+  {models}
+</section>
 
-<div class="two">
-  <section class="card"><p class="kicker">Projects · {project_count} total</p><h2>Top projects</h2>{projects}</section>
-  <section class="card"><p class="kicker">Tools</p><h2>What Claude reached for</h2>{tools}</section>
+<div class="pair two even">
+  <section><p class="kicker">Projects · {project_count} total</p><h2>Top projects</h2>{projects}</section>
+  <section><p class="kicker">Tools</p><h2>What Claude reached for</h2>{tools}</section>
 </div>
 
 <footer>
-  Generated locally from <code>~/.claude/projects</code> — nothing left your machine.<br>
-  Costs are what the same usage would cost at API list prices ({prices_updated}); subscriptions are billed differently.<br>
-  Unofficial tool, not affiliated with Anthropic.
+  <p>Generated locally from <code>~/.claude/projects</code>. Nothing left your machine.
+  Costs are API list prices ({prices_updated}); subscriptions are billed differently.</p>
+  <p>Claude Code Wrapped<br>Unofficial, not affiliated with Anthropic.</p>
 </footer>
 </main></body></html>
 """

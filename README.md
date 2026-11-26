@@ -31,7 +31,7 @@ claude-wrapped
 ```
 
 It reads `~/.claude/projects`, writes **`claude-wrapped.html`** in the current folder and opens it
-in your browser. The file is self-contained (no network, no external fonts or scripts), so you can
+in your browser. The file is self-contained (no network, no scripts, fonts embedded), so you can
 screenshot it, send it, or print it to PDF.
 
 ## What's inside
@@ -125,6 +125,7 @@ claude_wrapped/
   stats.py      aggregates everything into the numbers in the report
   archetype.py  picks your coding personality
   render.py     self-contained HTML with inline SVG charts
+  fonts/        Fraunces, Inter, JetBrains Mono (latin subsets, embedded in the report)
 ```
 
 Contributions are welcome, especially **prices for new models** (`pricing.py`) and **new
@@ -133,3 +134,5 @@ personalities** (`archetype.py`).
 ## License
 
 MIT. Unofficial project, not affiliated with or endorsed by Anthropic.
+The embedded fonts are under the SIL Open Font License 1.1, see
+[`claude_wrapped/fonts/OFL.txt`](claude_wrapped/fonts/OFL.txt).

@@ -25,6 +25,9 @@ claude-wrapped = "claude_wrapped.cli:main"
 [tool.setuptools]
 packages = ["claude_wrapped"]
 
+[tool.setuptools.package-data]
+claude_wrapped = ["fonts/*.woff2", "fonts/OFL.txt"]
+
 [tool.setuptools.dynamic]
 version = {attr = "claude_wrapped.__version__"}
 
