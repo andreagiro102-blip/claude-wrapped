@@ -1,0 +1,9 @@
+__pycache__/
+*.egg-info/
+build/
+dist/
+.venv/
+# generated reports contain your project names - never commit them by accident
+claude-wrapped*.html
+demo/fake-claude/
+demo/report.html

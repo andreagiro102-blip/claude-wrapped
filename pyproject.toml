@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-wrapped"
+authors = [{name = "Andrea"}]
+dynamic = ["version"]
+description = "Your Claude Code year in review - tokens, cost, models, projects, habits - from local logs."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = []
+keywords = ["claude", "claude-code", "wrapped", "usage", "tokens", "statistics"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Environment :: Console",
+]
+
+[project.scripts]
+claude-wrapped = "claude_wrapped.cli:main"
+
+[tool.setuptools]
+packages = ["claude_wrapped"]
+
+[tool.setuptools.dynamic]
+version = {attr = "claude_wrapped.__version__"}
+
+[project.urls]
+Homepage = "https://github.com/andreagiro102-blip/claude-wrapped"
+Issues = "https://github.com/andreagiro102-blip/claude-wrapped/issues"
