@@ -9,6 +9,7 @@ import webbrowser
 from datetime import date
 
 from . import __version__
+from .pdf import html_to_pdf
 from .pricing import load_prices
 from .render import render
 from .scan import default_claude_dir, retention_days, scan
@@ -29,6 +30,8 @@ def main(argv=None) -> int:
     ap.add_argument("--since", type=_date, help="start date, YYYY-MM-DD")
     ap.add_argument("--until", type=_date, help="end date, YYYY-MM-DD")
     ap.add_argument("-o", "--out", default="claude-wrapped.html", help="output HTML file")
+    ap.add_argument("--pdf", nargs="?", const="", metavar="FILE",
+                    help="also save a PDF (default: next to the HTML); uses Chrome, Edge or Chromium headless")
     ap.add_argument("--json", action="store_true", help="print the numbers as JSON instead of writing HTML")
     ap.add_argument("--hide-projects", action="store_true", help="replace project names with 'Project 1, 2...'")
     ap.add_argument("--prices", help="JSON file with extra/override model prices")
@@ -62,6 +65,10 @@ def main(argv=None) -> int:
     print(f"Read {sc.files} log files, {s['messages']:,} assistant messages "
           f"({s['period']['start']} to {s['period']['end']}).")   # ASCII only: Windows consoles are cp1252
     print(f"Report: {path}")
+    if a.pdf is not None:
+        pdf = a.pdf or os.path.splitext(path)[0] + ".pdf"
+        err = html_to_pdf(path, pdf)
+        print(f"PDF:    {os.path.abspath(pdf)}" if not err else f"PDF not saved: {err}")
 
     keep = retention_days(a.claude_dir)
     if keep is None or keep <= 30:

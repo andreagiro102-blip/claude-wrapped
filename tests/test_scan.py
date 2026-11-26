@@ -103,6 +103,20 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(s["api_usd"], 0)
         self.assertIn("claude-opus-5-9", s["unpriced"])
 
+    def test_every_bar_has_hover_numbers(self):
+        html = render(build(scan(self.tmp.name), load_prices()))
+        # 24 hours + 7 weekdays + the day-by-day timeline (drawn twice: wide and narrow)
+        self.assertGreaterEqual(html.count('<g class="b" data-t='), 24 + 7 + 2)
+        self.assertIn('data-t="Monday"', html)
+        self.assertIn('class="pdf"', html)
+
+    def test_pdf_without_browser_explains_instead_of_crashing(self):
+        from unittest import mock
+        from claude_wrapped import pdf
+        with mock.patch.object(pdf, "find_browser", return_value=None):
+            err = pdf.html_to_pdf(__file__, os.path.join(self.tmp.name, "x.pdf"))
+        self.assertIn("Save as PDF", err)
+
 
 if __name__ == "__main__":
     unittest.main()

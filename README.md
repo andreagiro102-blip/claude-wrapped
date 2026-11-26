@@ -31,8 +31,12 @@ claude-wrapped
 ```
 
 It reads `~/.claude/projects`, writes **`claude-wrapped.html`** in the current folder and opens it
-in your browser. The file is self-contained (no network, no scripts, fonts embedded), so you can
-screenshot it, send it, or print it to PDF.
+in your browser. The file is self-contained (no network, fonts embedded): hover any bar, day or row
+to read its numbers, and click **Save as PDF** for an A4 copy. Or skip the browser:
+
+```bash
+claude-wrapped --pdf          # also writes claude-wrapped.pdf, using Chrome, Edge or Chromium headless
+```
 
 ## What's inside
 
@@ -41,6 +45,7 @@ screenshot it, send it, or print it to PDF.
 | **Tokens & cost** | Total tokens split into input, output, cache read and cache write, and what the same usage would cost at API list prices |
 | **Your personality** | *The Night Owl*, *The Weekend Warrior*, *The Marathoner*, *The Delegator* or *The Builder*, with the number that earned it |
 | **Rhythm** | Month-by-month (or day-by-day for short periods), busiest day, longest streak, longest session |
+| **Calendar** | One square per day for the whole period, shaded by cost |
 | **Clock & week** | Your peak hour and favourite weekday |
 | **Caching** | How much of the input came from the prompt cache, and roughly how much that saved |
 | **Models** | Which Claude models you used and how much each one cost |
@@ -60,6 +65,7 @@ screenshot it, send it, or print it to PDF.
 | `--json` | Prints the raw numbers instead of HTML, for your own charts |
 | `--prices prices.json` | Adds or overrides model prices: `{"model-id": [input, output, cache_read]}` in $ per million tokens |
 | `-o file.html` | Output path |
+| `--pdf [file.pdf]` | Also save a PDF, with the Chrome, Edge or Chromium already installed (`CLAUDE_WRAPPED_BROWSER` to pick one) |
 | `--no-open` | Don't open the browser |
 | `--claude-dir PATH` | Another Claude Code config folder (also respects `CLAUDE_CONFIG_DIR`) |
 
@@ -124,7 +130,8 @@ claude_wrapped/
   pricing.py    API list prices (update this when new models ship)
   stats.py      aggregates everything into the numbers in the report
   archetype.py  picks your coding personality
-  render.py     self-contained HTML with inline SVG charts
+  render.py     self-contained HTML with inline SVG charts and hover tooltips
+  pdf.py        HTML -> PDF with a local headless Chromium
   fonts/        Fraunces, Inter, JetBrains Mono (latin subsets, embedded in the report)
 ```
 
