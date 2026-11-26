@@ -25,15 +25,27 @@ def _candidates():
     elif sys.platform == "darwin":
         for app in ("Google Chrome", "Microsoft Edge", "Chromium", "Brave Browser"):
             yield f"/Applications/{app}.app/Contents/MacOS/{app}"
+    # Only absolute PATH entries: on Windows a bare-name lookup also searches the current
+    # directory, so a planted chrome.exe in the folder you run from would get executed.
+    safe_path = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(d))
     for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
                  "microsoft-edge", "microsoft-edge-stable", "brave-browser", "chrome", "msedge"):
-        found = shutil.which(name)
+        found = shutil.which(name, path=safe_path)
         if found:
             yield found
 
 
+def _outside_cwd(p: str) -> bool:
+    real, cwd = os.path.realpath(p), os.path.realpath(os.getcwd())
+    try:
+        return os.path.commonpath([real, cwd]) != cwd
+    except ValueError:              # different drives on Windows
+        return True
+
+
 def find_browser() -> str | None:
-    return next((c for c in _candidates() if os.path.isfile(c)), None)
+    return next((c for c in _candidates()
+                 if os.path.isabs(c) and os.path.isfile(c) and _outside_cwd(c)), None)
 
 
 def html_to_pdf(html_path: str, pdf_path: str, browser: str | None = None) -> str | None:
